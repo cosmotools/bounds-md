@@ -57,6 +57,12 @@ owner: @someone
 7. **Unparseable list items.** List items that have no level are kept as written, at the end of their section. The checks report them.
 8. **Spacing.** One blank line between sections, and one newline at the end of the file.
 
+## Files and scope
+
+A project may have several BOUNDS.md files: one in the project root, and any number in subdirectories. Each file is formatted on its own. A file's rules apply to its directory and everything below it. Rules from all files that apply add up. A nested file never cancels a rule from a file above it, and when two rules conflict, the stricter one applies.
+
+A section's `scope:` holds comma-separated path patterns relative to the file's directory: `**` matches any depth, `*` anything within one path segment, `?` one character, and `{a,b}` either alternative. A plain directory such as `src/ui` means everything in it. A scope can't reach outside its file's directory.
+
 ## Versions
 
 The marker records which version of this spec a file follows. When a new version changes the layout, the doctor migrates older files. A file without a marker is treated as v1.

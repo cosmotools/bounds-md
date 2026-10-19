@@ -259,3 +259,100 @@ test('Claude still cannot edit BOUNDS.md itself, even a layout-only change', () 
   assert.ok(guard('Write', { file_path: path.join(dir, 'BOUNDS.md'), content: format(MESSY) }, dir));
   assert.equal(bashTouchesBoundsMd(`node "${HOOK}" doctor --fix`), false, 'the doctor command is allowed');
 });
+
+// --- nested files and scoped sections (CLAUDE.md-style loading) ---------------
+import { globToRegExp, inScope, ancestorFiles, nestedFilesFor, allFiles, loadView, crossCheck } from '../scripts/scope.mjs';
+
+test('globs and scopes match like path patterns', () => {
+  assert.ok(globToRegExp('src/**').test('src/a/b.ts'));
+  assert.ok(globToRegExp('**/*.tsx').test('a/b/c.tsx'));
+  assert.ok(globToRegExp('**/*.tsx').test('c.tsx'));
+  assert.ok(!globToRegExp('src/*.ts').test('src/a/b.ts'));
+  assert.ok(globToRegExp('src/{ui,web}/**').test('src/web/x.ts'));
+  assert.ok(inScope('src/ui/**, hooks/**', '/p/BOUNDS.md', '/p/hooks/a.json'));
+  assert.ok(inScope('src/ui', '/p/BOUNDS.md', '/p/src/ui/kit/Button.tsx'), 'plain directory means everything inside');
+  assert.ok(inScope('**', '/p/pkg/BOUNDS.md', '/p/pkg/x.ts'), 'relative to the BOUNDS.md directory');
+  assert.ok(!inScope('**', '/p/pkg/BOUNDS.md', '/p/other/x.ts'));
+});
+
+function monorepo() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bounds-mono-'));
+  const w = (rel, text) => {
+    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), text);
+  };
+  w('BOUNDS.md', `# BOUNDS.md\n<!-- bounds-md v1 -->\n\n## Backend\nowner: @boris\n- BACKEND-1 NEVER log personal data — GDPR\n\n## UI\nowner: @anna\nscope: src/ui/**\n- UI-1 NEVER add CSS frameworks — styling lives in the kit\n- UI-2 MUST use kit components\n\n## Glossary\nowner: @lead\n- buyer — a person who orders · avoid: customer\n`);
+  w('packages/web/BOUNDS.md', `# BOUNDS.md\n<!-- bounds-md v1 -->\n\n## Web\nowner: @wendy\n- WEB-1 NEVER call the API without the client wrapper — retries\n- UI-1 MUST lazy-load routes\n\n## Glossary\nowner: @wendy\n- buyer — a person with a cart\n- customer — a company account\n`);
+  w('src/ui/a.tsx', 'x');
+  w('packages/web/src/x.ts', 'x');
+  return root;
+}
+
+test('finds files above, below and along a path', () => {
+  const root = monorepo();
+  assert.deepEqual(ancestorFiles(path.join(root, 'packages/web')).slice(-2), [path.join(root, 'BOUNDS.md'), path.join(root, 'packages/web/BOUNDS.md')]);
+  assert.deepEqual(nestedFilesFor(root, path.join(root, 'packages/web/src/x.ts')), [path.join(root, 'packages/web/BOUNDS.md')]);
+  assert.deepEqual(nestedFilesFor(root, path.join(root, 'src/ui/a.tsx')), []);
+  assert.deepEqual(allFiles(root).map((f) => path.relative(root, f)).sort(), ['BOUNDS.md', 'packages/web/BOUNDS.md']);
+});
+
+test('load view shows scoped sections as a summary only', () => {
+  const view = loadView(fs.readFileSync(path.join(monorepo(), 'BOUNDS.md'), 'utf8'));
+  assert.match(view, /BACKEND-1 NEVER log personal data/);
+  assert.match(view, /## UI\nscope: src\/ui\/\*\*\n\(2 rule\(s\): UI-1, UI-2 — the full text loads/);
+  assert.doesNotMatch(view, /add CSS frameworks/);
+});
+
+test('hooks load nested files and scoped sections on demand, per agent, again after compact', () => {
+  const root = monorepo();
+  const env = { ...process.env, CLAUDE_PROJECT_DIR: root, CLAUDE_PLUGIN_DATA: fs.mkdtempSync(path.join(os.tmpdir(), 'bounds-data-')) };
+  const hook = (event, input) => {
+    const outText = execFileSync('node', [HOOK, event], { input: JSON.stringify({ cwd: root, session_id: 's1', ...input }), env, encoding: 'utf8' });
+    return outText ? JSON.parse(outText) : null;
+  };
+  const read = (rel, extra = {}) => hook('post-tool', { tool_name: 'Read', tool_input: { file_path: path.join(root, rel) }, ...extra });
+
+  const start = hook('session-start', { source: 'startup' });
+  assert.match(start.hookSpecificOutput.additionalContext, /BOUNDS\.md files also exist in: packages\/web/);
+  assert.doesNotMatch(start.hookSpecificOutput.additionalContext, /add CSS frameworks/);
+  assert.match(start.systemMessage, /\+1 nested/);
+
+  const ui = read('src/ui/a.tsx');
+  assert.match(ui.hookSpecificOutput.additionalContext, /UI-1 NEVER add CSS frameworks/);
+  assert.match(ui.systemMessage, /loaded UI rules \(src\/ui\/\*\*\)/);
+  assert.equal(read('src/ui/a.tsx'), null, 'loaded once per agent');
+
+  const web = read('packages/web/src/x.ts');
+  assert.match(web.hookSpecificOutput.additionalContext, /WEB-1 NEVER call the API/);
+  assert.match(web.systemMessage, /loaded packages\/web\/BOUNDS\.md/);
+
+  const sub = read('src/ui/a.tsx', { agent_id: 'a1' });
+  assert.match(sub.hookSpecificOutput.additionalContext, /UI-1 NEVER add CSS frameworks/, 'a subagent gets its own copy');
+
+  hook('session-start', { source: 'compact' });
+  assert.match(read('src/ui/a.tsx').hookSpecificOutput.additionalContext, /UI-1 NEVER/, 'reloads after compact');
+
+  read('packages/web/src/x.ts');
+  fs.appendFileSync(path.join(root, 'packages/web/BOUNDS.md'), '- WEB-2 SHOULD keep bundles small\n');
+  const changed = hook('prompt-submit', {});
+  assert.match(changed.hookSpecificOutput.additionalContext, /WEB-2 SHOULD keep bundles small/);
+  assert.match(changed.systemMessage, /changed — reloaded/);
+
+  const edit = hook('post-tool', { tool_name: 'Edit', tool_input: { file_path: path.join(root, 'packages/web/src/x.ts'), old_string: 'x', new_string: 'const customerId = 1' } });
+  // A nested file never cancels the root: "customer" stays avoided there too. The clash itself is a doctor warning.
+  assert.match(edit.hookSpecificOutput.additionalContext, /"customer" → "buyer"/);
+  const rootEdit = hook('post-tool', { tool_name: 'Edit', tool_input: { file_path: path.join(root, 'src/ui/a.tsx'), old_string: 'x', new_string: 'const customerId = 1' } });
+  assert.match(rootEdit.hookSpecificOutput.additionalContext, /"customer" → "buyer"/);
+});
+
+test('crossCheck and doctor report overrides between files', () => {
+  const root = monorepo();
+  const files = allFiles(root).map((file) => ({ file, rel: path.relative(root, file), text: fs.readFileSync(file, 'utf8') }));
+  const w = crossCheck(files).join('\n');
+  assert.match(w, /UI-1 exists in both BOUNDS\.md and packages\/web\/BOUNDS\.md/);
+  assert.match(w, /term "buyer" in packages\/web\/BOUNDS\.md redefines the one in BOUNDS\.md/);
+  assert.match(w, /"customer" is avoided in BOUNDS\.md but defined as a term in packages\/web\/BOUNDS\.md/);
+  const report = execFileSync('node', [HOOK, 'doctor'], { env: { ...process.env, CLAUDE_PROJECT_DIR: root }, encoding: 'utf8' });
+  assert.match(report, /overrides between files \(people decide\):/);
+  assert.match(report, /packages\/web\/BOUNDS\.md\n {2}2 rule\(s\)/);
+});

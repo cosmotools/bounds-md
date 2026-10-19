@@ -1,6 +1,6 @@
 {
   "name": "bounds",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "BOUNDS.md: project boundaries written by people. Loaded into every session, protected from Claude's edits, reviewed for vague or conflicting rules.",
   "keywords": [
     "rules",

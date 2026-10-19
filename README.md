@@ -40,7 +40,9 @@ Asked to delete that rule from `BOUNDS.md`, Claude is blocked by the plugin and 
 
 | When | What happens |
 |---|---|
-| Session starts | Finds `BOUNDS.md` in the project root and gives it to Claude with instructions on how to follow it. You see `BOUNDS.md: 7 rule(s) in 4 section(s)` in the chat. |
+| Session starts | Loads `BOUNDS.md` from the project directory and the directories above it, the same way CLAUDE.md loads, with instructions on how to follow it. You see `BOUNDS.md: 7 rule(s) in 4 section(s)` in the chat. |
+| Claude reads or edits a file in a subdirectory that has its own `BOUNDS.md` | That file loads, as a nested CLAUDE.md does. You see `BOUNDS.md: loaded packages/web/BOUNDS.md`. |
+| Claude reads or edits a file matching a section's `scope:` | That section's full rules load, like `.claude/rules` with `paths:`. Until then Claude sees only the section's name, scope and rule IDs. You see `BOUNDS.md: loaded UI rules (src/ui/**)`. |
 | Claude starts a subagent | The subagent gets the same rules. Subagents don't inherit the main session's context, so without this they would not know the rules. |
 | The file is new or has changed | In its next reply Claude gives a short review: vague wording, conflicting rules, rules that describe code instead of bounding it, rules the current code already breaks. Each problem comes with a ready-to-paste replacement line. |
 | A person edits the file mid-session | On your next message Claude gets the new version and reviews it. |
@@ -50,7 +52,7 @@ Asked to delete that rule from `BOUNDS.md`, Claude is blocked by the plugin and 
 
 Commands:
 - `/bounds:init` creates `BOUNDS.md` from the template and suggests a few rules for your project in the chat. It doesn't write them into the file, because rules come from people.
-- `/bounds:doctor` brings the file to the [standard layout](SPEC.md): section order, one-line rules sorted by ID, missing IDs, glossary order, format version. Before it writes, it compares the content of the file before and after the rewrite, and refuses if anything differs. It then lists what only people can fix, and lines in CLAUDE.md that would work better as rules.
+- `/bounds:doctor` brings every BOUNDS.md in the project to the [standard layout](SPEC.md): section order, one-line rules sorted by ID, missing IDs, glossary order, format version. Before it writes, it compares the content of the file before and after the rewrite, and refuses if anything differs. It then lists what only people can fix, overrides between files, and lines in CLAUDE.md that would work better as rules.
 - `/bounds:review` runs a full review: format, whether each rule can be checked, conflicts, a check against the code, rules worth dropping, and missing boundaries.
 
 There are no hard limits on size. If the file gets long or the rules get weak, Claude recommends what to merge or drop.
@@ -68,6 +70,18 @@ The full standard, including what counts as content and what counts as layout, i
   - `SHOULD` and `SHOULD NOT` are defaults. Claude may deviate, but says so and explains why.
 - **Comments.** `<!-- -->` blocks are notes for people and are never read as rules.
 - **Glossary.** The `## Glossary` section holds terms instead of rules; see below.
+
+### Nested files and scopes
+
+BOUNDS.md loads the way CLAUDE.md does. If you know one, you know the other.
+
+- **Files above the project directory and in it** load when the session starts.
+- **A BOUNDS.md in a subdirectory** (e.g. `packages/web/BOUNDS.md`) adds rules for that directory. It loads when Claude reads or edits a file there.
+- **A section with `scope:`** loads its full rules when Claude reads or edits a matching file. Paths are relative to the BOUNDS.md the section is in.
+- **After `/compact` or `/clear`**, anything loaded on demand loads again when it's needed.
+- **Subagents** get the same files at start and load their own on demand.
+
+There is one deliberate difference. With CLAUDE.md, files just add up, and if two contradict each other Claude may follow either one. With BOUNDS.md, files also add up, and a nested file never cancels a rule from a file above it. When two rules that apply conflict, Claude follows the stricter one and tells you. `/bounds:doctor` lists every override between files, so you can remove it at the source: a rule ID used in two files, a glossary term redefined in a nested file, a word avoided in one file but defined in another, a scope reaching outside its file's directory.
 
 ### Glossary
 
@@ -103,6 +117,7 @@ hooks/hooks.json                  SessionStart, SubagentStart, UserPromptSubmit,
 scripts/bounds.mjs                hook handlers and the doctor
 scripts/parse.mjs                 BOUNDS.md → document model
 scripts/format.mjs                standard layout, content-equality check
+scripts/scope.mjs                 file discovery, scope matching, on-demand loading, overrides
 scripts/lib.mjs                   checks, edit protection, glossary matching, state
 skills/init/SKILL.md              /bounds:init (template inside)
 skills/doctor/SKILL.md            /bounds:doctor

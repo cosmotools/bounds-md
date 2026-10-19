@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: Bring BOUNDS.md to the standard layout (section order, rule format, IDs, glossary order, format version) without touching its content, and report what only people can fix. Use when the user asks to tidy, normalize, fix, format or check the health of BOUNDS.md.
+description: Bring every BOUNDS.md in the project to the standard layout (section order, rule format, IDs, glossary order, format version) without touching its content, and report what only people can fix. Use when the user asks to tidy, normalize, fix, format or check the health of BOUNDS.md.
 ---
 
 You are the only path allowed to rewrite BOUNDS.md, and only its layout. Never edit BOUNDS.md with any other tool or command.
@@ -13,6 +13,8 @@ You are the only path allowed to rewrite BOUNDS.md, and only its layout. Never e
 2. Tell the user in one or two lines what the layout fix did: how many lines changed and which rules got new IDs. If it said the layout already matches, say so.
 3. Then go through what only people can decide, each with a ready-to-paste line or a concrete instruction:
    - each content issue the script printed;
+   - each override between files the script printed (a rule ID used in two files, a term redefined in a nested file, a word avoided in one file but defined in another, a scope reaching outside its file's directory) — nested files add to the files above them and never cancel them, so every override is a conflict to resolve;
+   - nested rules that weaken or contradict a rule from a BOUNDS.md above them, which a script cannot see;
    - rules whose ID prefix doesn't match their section — probably written in the wrong section;
    - custom sections that duplicate a standard one (e.g. "Tests" next to "Testing") and should be merged;
    - lines in CLAUDE.md or AGENTS.md that read like boundaries ("never", "always", "must", "не делай") and would be stronger as BOUNDS.md rules.

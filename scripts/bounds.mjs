@@ -3,34 +3,37 @@
 // Also the doctor: `node bounds.mjs doctor [--fix]`, run from /bounds:doctor.
 import fs from 'node:fs';
 import path from 'node:path';
-import { findBoundsMd, hash, check, guard, findAvoided, isBoundsPath, stateFile, loadState, saveState, parse, format, sameContent, contentHash } from './lib.mjs';
+import { hash, check, guard, findAvoided, isBoundsPath, stateFile, loadState, saveState, parse, format, sameContent, contentHash } from './lib.mjs';
+import { ancestorFiles, nestedFilesFor, allFiles, loadView, scopedSectionsFor, crossCheck } from './scope.mjs';
 
-const PREAMBLE = `The project has a BOUNDS.md: boundaries written and owned by the people on this project. They outrank CLAUDE.md, docs, skills and your own preferences.
+const PREAMBLE = `The project has BOUNDS.md files: boundaries written and owned by the people on this project. They outrank CLAUDE.md, docs, skills and your own preferences.
 - NEVER / MUST / MUST NOT are hard limits. If a task cannot be done without breaking one, stop and ask the user, naming the rule ID. Do not look for a workaround.
 - SHOULD / SHOULD NOT are defaults. You may deviate, but say so and why, naming the rule ID.
-- "scope:" limits a section to matching paths. An empty section means no boundaries there.
+- Like CLAUDE.md, a BOUNDS.md can also sit in a subdirectory. It adds rules for that directory and loads when you read or edit a file there. Rules from all files that apply add up; a nested file never cancels a rule from a file above it. If two rules that apply conflict, follow the stricter one and tell the user about the conflict.
+- A section with "scope:" applies only to matching paths, relative to its file. Its full text loads when you read or edit a matching file. An empty section means no boundaries there.
+- When you cite a rule from a file other than the root BOUNDS.md, include the file path, e.g. "packages/web/BOUNDS.md UI-2".
 - You cannot edit BOUNDS.md (a hook blocks it). Its layout can be fixed only by /bounds:doctor, which never changes content. If a rule looks wrong, outdated or missing, tell the user and give the exact line to paste.
 - When you finish a task that a rule shaped, name the rule IDs in your summary.
-- A "Glossary" section, if present, fixes the project's vocabulary. Use its terms in replies, code, comments and docs; don't use the words listed after "avoid:". Names joined by "=" are the same term in different languages: use the one that matches the language you are writing in. Quoting something outside the project (an external API, a library) is fine.
+- A "Glossary" section fixes the vocabulary for its file's directory. Use its terms in replies, code, comments and docs; don't use the words listed after "avoid:". Names joined by "=" are the same term in different languages: use the one that matches the language you are writing in. Quoting something outside the project (an external API, a library) is fine.
 - When a concept comes up that has no term yet, or is called two different things, point it out and suggest a glossary line in the format "- term — meaning · avoid: other, words".`;
 
-function rulesContext(file, text) {
-  return `${PREAMBLE}\n\n<bounds-md path="${file}">\n${text.trim()}\n</bounds-md>`;
+function block(rel, text) {
+  return `<bounds-md path="${rel}">\n${loadView(text)}\n</bounds-md>`;
 }
 
-function reviewRequest(problems) {
+function reviewRequest(rel, problems) {
   const found = problems.length
     ? `Automated checks found:\n${problems.map((p) => `- ${p.line ? `line ${p.line}: ` : ''}${p.msg}`).join('\n')}`
     : 'Automated checks found no format problems.';
-  return `\n\nBOUNDS.md is new or has changed since it was last reviewed. At the start of your next reply, give the user a short review (a few bullets, then continue with whatever they asked):
+  return `\n\n${rel} is new or has changed since it was last reviewed. At the start of your next reply, give the user a short review of it (a few bullets, then continue with whatever they asked):
 ${found}
-Also check what a script cannot: rules that contradict each other, glossary terms that are vague or overlap, rules that describe how the code works instead of bounding what may be done, rules the current code already breaks if that is obvious, and sections so long they should be merged or trimmed. Empty sections and empty "owner:" / "scope:" lines are unfilled template placeholders — do not flag them. For each problem suggest the exact replacement line. If everything is fine, say so in one line.`;
+Also check what a script cannot: rules that contradict each other or a rule in a BOUNDS.md above it, glossary terms that are vague or overlap, rules that describe how the code works instead of bounding what may be done, rules the current code already breaks if that is obvious, and sections so long they should be merged or trimmed. Empty sections and empty "owner:" / "scope:" lines are unfilled template placeholders — do not flag them. For each problem suggest the exact replacement line. If everything is fine, say so in one line.`;
 }
 
-function summary({ sections, problems, ruleCount, terms }) {
+function summary(rel, { sections, problems, ruleCount, terms }) {
   const used = sections.filter((s) => s.rules.length).length;
   return (
-    `BOUNDS.md: ${ruleCount} rule(s) in ${used} section(s)` +
+    `${rel}: ${ruleCount} rule(s) in ${used} section(s)` +
     (terms.length ? ` · ${terms.length} glossary term(s)` : '') +
     (problems.length ? ` · ${problems.length} note(s), Claude will review` : '')
   );
@@ -44,68 +47,114 @@ function out(eventName, { context, message, decision } = {}) {
   if (Object.keys(result).length) process.stdout.write(JSON.stringify(result));
 }
 
-function load(projectDir, sessionId) {
-  const file = findBoundsMd(projectDir);
+// --- session state ------------------------------------------------------------
+// What each agent (the main session or a subagent) has in context: file hashes and scoped sections.
+
+function openState(projectDir) {
   const sf = stateFile(projectDir);
   const state = loadState(sf);
-  const text = file ? fs.readFileSync(file, 'utf8') : null;
-  return { file, text, h: text === null ? null : hash(text), sf, state, known: state.sessions[sessionId]?.hash ?? null };
+  if (typeof state.reviewed !== 'object' || state.reviewed === null) state.reviewed = {};
+  return { sf, state };
+}
+
+function agentRecord(state, input, reset = false) {
+  const sid = input.session_id || 'unknown';
+  const session = (state.sessions[sid] ||= { at: Date.now(), agents: {} });
+  session.agents ||= {};
+  session.at = Date.now();
+  const key = input.agent_id || 'main';
+  if (reset || !session.agents[key]) session.agents[key] = { files: {}, sections: [] };
+  return session.agents[key];
+}
+
+const relOf = (projectDir, file) => path.relative(projectDir, file) || path.basename(file);
+
+// Loads files into an agent's context; returns context text, summary lines and the files' review requests.
+function loadFiles(projectDir, files, agent, state, { review }) {
+  const blocks = [];
+  const summaries = [];
+  let reviews = '';
+  for (const file of files) {
+    const rel = relOf(projectDir, file);
+    const text = fs.readFileSync(file, 'utf8');
+    const result = check(text);
+    blocks.push(block(rel, text));
+    summaries.push(summary(rel, result));
+    agent.files[rel] = hash(text);
+    const ch = contentHash(text);
+    if (review && state.reviewed[rel] !== ch) {
+      reviews += reviewRequest(rel, result.problems);
+      state.reviewed[rel] = ch;
+    }
+  }
+  return { context: blocks.join('\n\n') + reviews, summaries };
 }
 
 function sessionStart(input, projectDir) {
-  const sid = input.session_id || 'unknown';
-  const { file, text, h, sf, state } = load(projectDir, sid);
-  if (!file) {
+  const { sf, state } = openState(projectDir);
+  // After /compact or /clear the context is gone, so everything loads again (the same as nested CLAUDE.md files).
+  const agent = agentRecord(state, input, true);
+  const files = ancestorFiles(projectDir);
+  if (!files.length) {
     if (!state.hinted) {
       state.hinted = true;
-      saveState(sf, state);
       out('SessionStart', { message: 'bounds plugin: no BOUNDS.md in this project. Create one with /bounds:init to set boundaries for Claude.' });
     }
+    saveState(sf, state);
     return;
   }
-  const result = check(text);
-  let context = rulesContext(path.relative(projectDir, file), text);
-  const ch = contentHash(text);
-  if (state.reviewed !== ch) {
-    context += reviewRequest(result.problems);
-    state.reviewed = ch;
-  }
-  state.sessions[sid] = { hash: h, at: Date.now() };
+  const { context, summaries } = loadFiles(projectDir, files, agent, state, { review: true });
+  const nested = allFiles(projectDir).filter((f) => !files.includes(f)).map((f) => path.dirname(relOf(projectDir, f)));
+  const nestedNote = nested.length ? `\n\nBOUNDS.md files also exist in: ${nested.join(', ')}. Each loads when you read or edit a file in its directory; read it yourself first if you plan changes there.` : '';
   saveState(sf, state);
-  out('SessionStart', { context, message: summary(result) });
+  out('SessionStart', {
+    context: `${PREAMBLE}\n\n${context}${nestedNote}`,
+    message: summaries.join(' · ') + (nested.length ? ` · +${nested.length} nested` : ''),
+  });
 }
 
 // Subagents don't inherit the main session's context, so each one gets the rules when it starts. No review here.
 function subagentStart(input, projectDir) {
-  const file = findBoundsMd(projectDir);
-  if (!file) return;
-  out('SubagentStart', { context: rulesContext(path.relative(projectDir, file), fs.readFileSync(file, 'utf8')) });
+  const files = ancestorFiles(projectDir);
+  if (!files.length) return;
+  const { sf, state } = openState(projectDir);
+  const agent = agentRecord(state, input, true);
+  const { context } = loadFiles(projectDir, files, agent, state, { review: false });
+  saveState(sf, state);
+  out('SubagentStart', { context: `${PREAMBLE}\n\n${context}` });
 }
 
+// Reloads any file in the main session's context that changed or disappeared, and picks up a new root file.
 function promptSubmit(input, projectDir) {
-  const sid = input.session_id || 'unknown';
-  const { file, text, h, sf, state, known } = load(projectDir, sid);
-  if (h === known) return;
+  const { sf, state } = openState(projectDir);
+  const agent = agentRecord(state, input);
+  const parts = [];
+  const messages = [];
 
-  if (!file) {
-    delete state.sessions[sid];
-    saveState(sf, state);
-    out('UserPromptSubmit', {
-      context: 'BOUNDS.md has been removed from the project. Its rules no longer apply.',
-      message: 'BOUNDS.md removed — its rules no longer apply',
-    });
-    return;
+  for (const rel of Object.keys(agent.files)) {
+    const file = path.resolve(projectDir, rel);
+    if (!fs.existsSync(file)) {
+      delete agent.files[rel];
+      parts.push(`${rel} has been removed. Its rules no longer apply.`);
+      messages.push(`${rel} removed — its rules no longer apply`);
+    }
   }
-  const result = check(text);
-  let context = `BOUNDS.md changed during this session. This version replaces any earlier one.\n\n${rulesContext(path.relative(projectDir, file), text)}`;
-  const ch = contentHash(text);
-  if (state.reviewed !== ch) {
-    context += reviewRequest(result.problems);
-    state.reviewed = ch;
+  const changed = [];
+  for (const file of [...ancestorFiles(projectDir), ...Object.keys(agent.files).map((rel) => path.resolve(projectDir, rel))]) {
+    const rel = relOf(projectDir, file);
+    if (changed.includes(file) || !fs.existsSync(file)) continue;
+    if (agent.files[rel] !== hash(fs.readFileSync(file, 'utf8'))) changed.push(file);
   }
-  state.sessions[sid] = { hash: h, at: Date.now() };
+  if (changed.length) {
+    const known = changed.filter((f) => agent.files[relOf(projectDir, f)]);
+    agent.sections = agent.sections.filter((k) => !changed.some((f) => k.startsWith(relOf(projectDir, f) + '#')));
+    const { context, summaries } = loadFiles(projectDir, changed, agent, state, { review: true });
+    parts.push(`${known.length ? 'These BOUNDS.md files changed during this session. Each version replaces the earlier one.' : 'BOUNDS.md files loaded:'}\n\n${context}`);
+    if (!Object.keys(agent.files).length || known.length < changed.length) parts.unshift(PREAMBLE);
+    messages.push((known.length ? 'BOUNDS.md changed — reloaded. ' : '') + summaries.join(' · '));
+  }
   saveState(sf, state);
-  out('UserPromptSubmit', { context, message: `${known ? 'BOUNDS.md changed — reloaded. ' : ''}${summary(result)}` });
+  if (parts.length) out('UserPromptSubmit', { context: parts.join('\n\n'), message: messages.join(' · ') });
 }
 
 function preTool(input, projectDir) {
@@ -113,26 +162,54 @@ function preTool(input, projectDir) {
   if (reason) out('PreToolUse', { decision: { permissionDecision: 'deny', permissionDecisionReason: reason } });
 }
 
-// Glossary is advisory: after an edit, point out avoided words the edit introduced, never block it.
+// After Claude reads or edits a file: load nested BOUNDS.md files and scoped sections that now apply,
+// and point out avoided glossary words the edit introduced (a warning, never a block).
 function postTool(input, projectDir) {
   const ti = input.tool_input || {};
-  if (!ti.file_path || isBoundsPath(ti.file_path)) return;
-  const file = findBoundsMd(projectDir);
-  if (!file) return;
-  const { terms } = check(fs.readFileSync(file, 'utf8'));
-  if (!terms.some((t) => t.avoid.length)) return;
+  const target = ti.file_path || ti.notebook_path;
+  if (!target || isBoundsPath(target)) return;
+  const abs = path.resolve(projectDir, target);
+  const { sf, state } = openState(projectDir);
+  const agent = agentRecord(state, input);
+  const parts = [];
+  const loaded = [];
 
-  const edits = input.tool_name === 'MultiEdit' ? ti.edits || [] : [ti];
-  const added = edits.map((e) => e.new_string ?? e.content ?? '').join('\n');
-  const removed = edits.map((e) => e.old_string ?? '').join('\n');
-  const hits = findAvoided(added, removed, terms);
-  if (!hits.length) return;
+  const nested = nestedFilesFor(projectDir, abs).filter((f) => !agent.files[relOf(projectDir, f)]);
+  if (nested.length) {
+    const { context } = loadFiles(projectDir, nested, agent, state, { review: !input.agent_id });
+    parts.push(`${path.relative(projectDir, abs)} is covered by BOUNDS.md files that just loaded. Their rules add to the ones you already have:\n\n${context}`);
+    loaded.push(...nested.map((f) => relOf(projectDir, f)));
+  }
 
-  const list = hits.map((h) => `"${h.word}" → "${h.use}"`).join(', ');
-  out('PostToolUse', {
-    context: `Glossary (BOUNDS.md): your change to ${path.relative(projectDir, path.resolve(projectDir, ti.file_path))} uses word(s) the glossary says to avoid: ${list}. Rename them now unless the text quotes something outside the project; if you keep one, say why.`,
-  });
+  const applicable = [...ancestorFiles(projectDir), ...nestedFilesFor(projectDir, abs)];
+  for (const file of applicable) {
+    const rel = relOf(projectDir, file);
+    for (const s of scopedSectionsFor(file, fs.readFileSync(file, 'utf8'), abs)) {
+      const key = `${rel}#${s.title}`;
+      if (agent.sections.includes(key)) continue;
+      agent.sections.push(key);
+      parts.push(`Rules for ${path.relative(projectDir, abs)} from ${rel} (scope: ${s.scope}):\n\n${s.text}`);
+      loaded.push(`${s.title} rules (${s.scope})`);
+    }
+  }
+
+  if (input.tool_name !== 'Read') {
+    const terms = applicable.flatMap((f) => check(fs.readFileSync(f, 'utf8')).terms);
+    const edits = input.tool_name === 'MultiEdit' ? ti.edits || [] : [ti];
+    const added = edits.map((e) => e.new_string ?? e.content ?? e.new_source ?? '').join('\n');
+    const removed = edits.map((e) => e.old_string ?? '').join('\n');
+    const hits = findAvoided(added, removed, terms);
+    if (hits.length) {
+      const list = hits.map((h) => `"${h.word}" → "${h.use}"`).join(', ');
+      parts.push(`Glossary (BOUNDS.md): your change to ${path.relative(projectDir, abs)} uses word(s) the glossary says to avoid: ${list}. Rename them now unless the text quotes something outside the project; if you keep one, say why.`);
+    }
+  }
+
+  saveState(sf, state);
+  if (parts.length) out('PostToolUse', { context: parts.join('\n\n'), message: loaded.length ? `BOUNDS.md: loaded ${loaded.join(', ')}` : undefined });
 }
+
+// --- doctor -------------------------------------------------------------------
 
 // Lines added, removed or moved between two texts (via longest common subsequence; files are small).
 function changedLines(a, b) {
@@ -147,43 +224,55 @@ function changedLines(a, b) {
   return Math.max(x.length, y.length) - prev[y.length];
 }
 
-// The only writer of BOUNDS.md: rewrites the layout to the standard and refuses if the content would change.
+// The only writer of BOUNDS.md: rewrites each file's layout to the standard and refuses if its content would change.
 function doctor(projectDir, fix) {
   const say = (s = '') => process.stdout.write(s + '\n');
   say(`node ${process.versions.node}${Number(process.versions.node.split('.')[0]) < 18 ? ' — too old, the plugin needs Node 18+' : ''}`);
-  const file = findBoundsMd(projectDir);
-  if (!file) {
+  const files = [...new Set([...ancestorFiles(projectDir), ...allFiles(projectDir)])];
+  if (!files.length) {
     say(`no BOUNDS.md in ${projectDir} — create one with /bounds:init`);
     return 0;
   }
-  const text = fs.readFileSync(file, 'utf8');
-  const next = format(text);
-  if (next !== text && !sameContent(text, next)) {
-    say('layout: NOT fixed — the formatter would change content, which is never allowed. Please report this as a bug.');
-    return 2;
+  let status = 0;
+  const current = [];
+  for (const file of files) {
+    const rel = relOf(projectDir, file);
+    const text = fs.readFileSync(file, 'utf8');
+    const next = format(text);
+    say(`\n${rel}`);
+    if (next !== text && !sameContent(text, next)) {
+      say('  layout: NOT fixed — the formatter would change content, which is never allowed. Please report this as a bug.');
+      current.push({ rel, file, text });
+      status = 2;
+      continue;
+    }
+    const oldIds = new Set(check(text).sections.flatMap((s) => s.rules.map((r) => r.id)));
+    const newIds = parse(next).sections.flatMap((s) => s.rules).filter((r) => !oldIds.has(r.id)).map((r) => r.id);
+    const changed = changedLines(text, next);
+    let layout = 'layout: matches the standard';
+    if (next !== text && fix) {
+      fs.writeFileSync(file, next);
+      layout = `layout: fixed (${changed} line(s) changed${newIds.length ? `; new IDs: ${newIds.join(', ')}` : ''}). Content is unchanged.`;
+    } else if (next !== text) {
+      layout = `layout: differs from the standard (${changed} line(s) would change) — run with --fix`;
+    }
+    // Report on the file as it is now, so issues the fix just solved (missing IDs) don't show up.
+    const nowText = fix ? next : text;
+    current.push({ rel, file, text: nowText });
+    const result = check(nowText);
+    const used = result.sections.filter((s) => s.rules.length).length;
+    say(`  ${result.ruleCount} rule(s) in ${used} section(s), ${result.terms.length} glossary term(s)`);
+    say(`  ${layout}`);
+    const issues = result.problems.filter((p) => p.kind !== 'layout');
+    say(issues.length ? '  content issues (people decide, doctor never changes these):' : '  no content issues found by checks');
+    for (const p of issues) say(`  - ${p.line ? `line ${p.line}: ` : ''}${p.msg}`);
   }
-  const before = check(text);
-  const oldIds = new Set(before.sections.flatMap((s) => s.rules.map((r) => r.id)));
-  const newIds = parse(next).sections.flatMap((s) => s.rules).filter((r) => !oldIds.has(r.id)).map((r) => r.id);
-  const changed = changedLines(text, next);
-
-  let layout = 'layout: matches the standard';
-  if (next !== text && fix) {
-    fs.writeFileSync(file, next);
-    layout = `layout: fixed (${changed} line(s) changed${newIds.length ? `; new IDs: ${newIds.join(', ')}` : ''}). Content is unchanged.`;
-  } else if (next !== text) {
-    layout = `layout: differs from the standard (${changed} line(s) would change) — run with --fix`;
+  const overrides = crossCheck(current);
+  if (files.length > 1) {
+    say(overrides.length ? '\noverrides between files (people decide):' : '\nno overrides between files found by checks');
+    for (const w of overrides) say(`- ${w}`);
   }
-
-  // Report on the file as it is now, so issues the fix just solved (missing IDs) don't show up.
-  const result = check(fix ? next : text);
-  const used = result.sections.filter((s) => s.rules.length).length;
-  say(`${path.relative(projectDir, file)}: ${result.ruleCount} rule(s) in ${used} section(s), ${result.terms.length} glossary term(s)`);
-  say(layout);
-  const issues = result.problems.filter((p) => p.kind !== 'layout');
-  say(issues.length ? `\ncontent issues (people decide, doctor never changes these):` : '\nno content issues found by checks');
-  for (const p of issues) say(`- ${p.line ? `line ${p.line}: ` : ''}${p.msg}`);
-  return 0;
+  return status;
 }
 
 const handlers = { 'session-start': sessionStart, 'subagent-start': subagentStart, 'prompt-submit': promptSubmit, 'pre-tool': preTool, 'post-tool': postTool };
@@ -193,6 +282,8 @@ if (process.argv[2] === 'doctor') {
 } else {
   try {
     const raw = fs.readFileSync(0, 'utf8');
+    // Set BOUNDS_DEBUG_LOG to a file path to record every hook input (for debugging hook behaviour).
+    if (process.env.BOUNDS_DEBUG_LOG) fs.appendFileSync(process.env.BOUNDS_DEBUG_LOG, `${process.argv[2]} ${raw.trim()}\n`);
     const input = raw.trim() ? JSON.parse(raw) : {};
     const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd();
     handlers[process.argv[2]]?.(input, projectDir);

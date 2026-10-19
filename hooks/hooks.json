@@ -1,5 +1,5 @@
 {
-  "description": "Load BOUNDS.md into every session and subagent, reload it when it changes, block Claude from modifying it, and flag avoided glossary words in Claude's edits",
+  "description": "Load BOUNDS.md files into every session and subagent (nested files and scoped sections on demand, like CLAUDE.md), reload it when it changes, block Claude from modifying it, and flag avoided glossary words in Claude's edits",
   "hooks": {
     "SessionStart": [
       {
@@ -24,7 +24,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit",
+        "matcher": "Read|Edit|Write|MultiEdit|NotebookEdit",
         "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/bounds.mjs\" post-tool", "timeout": 10 }]
       }
     ]
