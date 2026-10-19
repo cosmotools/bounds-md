@@ -17,7 +17,7 @@ owner: @cosmotools
 owner: @cosmotools
 scope: scripts/**, hooks/**
 - ARCH-1 NEVER add runtime dependencies — Node built-ins only, so the plugin installs without npm
-- ARCH-2 MUST fail open: an error in a hook is reported on stderr and never breaks the user's session or blocks a tool call
+- ARCH-2 MUST fail open: if a hook itself errors, report it on stderr and let the tool call through — never break the user's session
 - ARCH-3 MUST keep plugin state outside the user's project — $CLAUDE_PLUGIN_DATA or ~/.cache/bounds-md
 - ARCH-4 SHOULD keep checks deterministic and in scripts/lib.mjs; anything needing judgement goes to Claude's review
 
