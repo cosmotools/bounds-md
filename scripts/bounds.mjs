@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Hook entry point for the bounds plugin: `node bounds.mjs <session-start|prompt-submit|pre-tool|post-tool>`, hook JSON on stdin.
+// Hook entry point for the bounds plugin: `node bounds.mjs <session-start|subagent-start|prompt-submit|pre-tool|post-tool>`, hook JSON on stdin.
 // Also the doctor: `node bounds.mjs doctor [--fix]`, run from /bounds:doctor.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -73,6 +73,13 @@ function sessionStart(input, projectDir) {
   state.sessions[sid] = { hash: h, at: Date.now() };
   saveState(sf, state);
   out('SessionStart', { context, message: summary(result) });
+}
+
+// Subagents don't inherit the main session's context, so each one gets the rules when it starts. No review here.
+function subagentStart(input, projectDir) {
+  const file = findBoundsMd(projectDir);
+  if (!file) return;
+  out('SubagentStart', { context: rulesContext(path.relative(projectDir, file), fs.readFileSync(file, 'utf8')) });
 }
 
 function promptSubmit(input, projectDir) {
@@ -179,7 +186,7 @@ function doctor(projectDir, fix) {
   return 0;
 }
 
-const handlers = { 'session-start': sessionStart, 'prompt-submit': promptSubmit, 'pre-tool': preTool, 'post-tool': postTool };
+const handlers = { 'session-start': sessionStart, 'subagent-start': subagentStart, 'prompt-submit': promptSubmit, 'pre-tool': preTool, 'post-tool': postTool };
 
 if (process.argv[2] === 'doctor') {
   process.exitCode = doctor(process.env.CLAUDE_PROJECT_DIR || process.cwd(), process.argv.includes('--fix'));

@@ -41,6 +41,7 @@ Asked to delete that rule from `BOUNDS.md`, Claude is blocked by the plugin and 
 | When | What happens |
 |---|---|
 | Session starts | Finds `BOUNDS.md` in the project root and gives it to Claude with instructions on how to follow it. You see `BOUNDS.md: 7 rule(s) in 4 section(s)` in the chat. |
+| Claude starts a subagent | The subagent gets the same rules. Subagents don't inherit the main session's context, so without this they would not know the rules. |
 | The file is new or has changed | In its next reply Claude gives a short review: vague wording, conflicting rules, rules that describe code instead of bounding it, rules the current code already breaks. Each problem comes with a ready-to-paste replacement line. |
 | A person edits the file mid-session | On your next message Claude gets the new version and reviews it. |
 | Claude tries to change BOUNDS.md | Blocked, both through the Edit/Write tools and through the shell (`sed -i`, `>>`, `tee`, `rm`, `mv`…). Creating the file from scratch is allowed. The one exception is `/bounds:doctor`, which may rewrite the layout but never the content. |
@@ -98,7 +99,7 @@ This repository has its own [BOUNDS.md](BOUNDS.md): the plugin's boundaries, plu
 ```
 .claude-plugin/plugin.json        plugin manifest
 .claude-plugin/marketplace.json   lets /plugin install it from this repo
-hooks/hooks.json                  SessionStart, UserPromptSubmit, PreToolUse, PostToolUse
+hooks/hooks.json                  SessionStart, SubagentStart, UserPromptSubmit, PreToolUse, PostToolUse
 scripts/bounds.mjs                hook handlers and the doctor
 scripts/parse.mjs                 BOUNDS.md → document model
 scripts/format.mjs                standard layout, content-equality check

@@ -111,6 +111,12 @@ test('hooks end to end: load, review once, reload on change, deny edits', () => 
   assert.match(changed.hookSpecificOutput.additionalContext, /BACKEND-2 MUST use repo\.ts/);
   assert.match(changed.hookSpecificOutput.additionalContext, /short review/);
 
+  // Subagents get the rules too, without a review request and without touching state.
+  const sub = hook('subagent-start', { session_id: 's3', agent_type: 'general-purpose' });
+  assert.equal(sub.hookSpecificOutput.hookEventName, 'SubagentStart');
+  assert.match(sub.hookSpecificOutput.additionalContext, /BACKEND-2 MUST use repo\.ts/);
+  assert.doesNotMatch(sub.hookSpecificOutput.additionalContext, /short review/);
+
   const denied = hook('pre-tool', { tool_name: 'Bash', tool_input: { command: 'sed -i s/NEVER/SHOULD/ BOUNDS.md' } });
   assert.equal(denied.hookSpecificOutput.permissionDecision, 'deny');
   assert.equal(hook('pre-tool', { tool_name: 'Edit', tool_input: { file_path: path.join(project, 'src/a.ts') } }), null);

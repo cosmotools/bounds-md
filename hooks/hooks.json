@@ -1,9 +1,14 @@
 {
-  "description": "Load BOUNDS.md into every session, reload it when it changes, block Claude from modifying it, and flag avoided glossary words in Claude's edits",
+  "description": "Load BOUNDS.md into every session and subagent, reload it when it changes, block Claude from modifying it, and flag avoided glossary words in Claude's edits",
   "hooks": {
     "SessionStart": [
       {
         "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/bounds.mjs\" session-start", "timeout": 10 }]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/bounds.mjs\" subagent-start", "timeout": 10 }]
       }
     ],
     "UserPromptSubmit": [
