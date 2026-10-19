@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { check, guard, bashTouchesBoundsMd, findBoundsMd, parseTerm, findAvoided } from '../scripts/lib.mjs';
+import { check, guard, bashTouchesBoundsMd, findBoundsMd, parseTerm, findAvoided, format, sameContent, contentHash } from '../scripts/lib.mjs';
 
 const HOOK = path.resolve('scripts/bounds.mjs');
 const TEMPLATE = fs.readFileSync('skills/init/SKILL.md', 'utf8').match(/````markdown\n([\s\S]*?)````/)[1];
@@ -39,9 +39,9 @@ test('parses sections, owners, scopes, rules and continuation lines; skips comme
 
 test('checks report format, vague, owner, duplicate and missing-ID problems — and nothing about rule counts', () => {
   const kinds = check(SAMPLE).problems.map((p) => p.kind).sort();
-  assert.deepEqual(kinds, ['dup', 'format', 'id', 'owner', 'vague']);
+  assert.deepEqual(kinds, ['dup', 'format', 'id', 'layout', 'owner', 'vague']);
   const many = '## UI\nowner: a\n' + Array.from({ length: 40 }, (_, i) => `- UI-${i + 1} MUST rule ${i + 1}`).join('\n');
-  assert.deepEqual(check(many).problems, []);
+  assert.deepEqual(check(format(many)).problems, []);
 });
 
 test('the empty template is clean', () => {
@@ -93,7 +93,7 @@ test('hooks end to end: load, review once, reload on change, deny edits', () => 
 
   fs.writeFileSync(path.join(project, 'BOUNDS.md'), SAMPLE);
   const first = hook('session-start', { session_id: 's2' });
-  assert.match(first.systemMessage, /6 rule\(s\) in 2 section\(s\) · 5 note\(s\)/);
+  assert.match(first.systemMessage, /6 rule\(s\) in 2 section\(s\) · 6 note\(s\)/);
   assert.match(first.hookSpecificOutput.additionalContext, /BACKEND-1 NEVER log personal data/);
   assert.match(first.hookSpecificOutput.additionalContext, /short review/);
 
@@ -144,7 +144,7 @@ test('parses glossary terms: names, translations, meaning, avoid lists, continua
 
 test('glossary checks: missing meaning, duplicate term, term that is also avoided; no level errors', () => {
   const kinds = check(GLOSSARY).problems.map((p) => p.kind).sort();
-  assert.deepEqual(kinds, ['dup-term', 'term', 'term', 'term-conflict']); // "orphan" and the MUST line have no meaning
+  assert.deepEqual(kinds, ['dup-term', 'layout', 'term', 'term', 'term-conflict']); // "orphan" and the MUST line have no meaning
 });
 
 test('findAvoided matches whole words in prose and identifiers, ignores words already there', () => {
@@ -175,4 +175,81 @@ test('post-tool hook warns about avoided words in Claude edits and stays silent 
   assert.equal(hook({ tool_name: 'Write', tool_input: { file_path: file, content: 'const sectionName = 1' } }), null);
   const multi = hook({ tool_name: 'MultiEdit', tool_input: { file_path: file, edits: [{ old_string: 'a', new_string: 'b' }, { old_string: 'c', new_string: 'run audit' }] } });
   assert.match(multi.hookSpecificOutput.additionalContext, /"audit" → "review"/);
+});
+
+const MESSY = `# BOUNDS.md
+<!-- team notes: ask @lead before adding sections -->
+
+## testing
+- [testing-2] must run tests before push
+- never skip failing tests -- a red test is information
+  even when the release is late
+
+## Billing
+owner: @kate
+- BILL-1 NEVER store card numbers
+- SHOULD round to cents - accountants
+some prose note
+
+## Glossary
+owner: @lead
+- section — group of rules · avoid: category
+- buyer — a person who orders
+
+## Product
+owner: @pm
+- PRODUCT-1 MUST stay free for students
+`;
+
+test('format puts the file in the standard layout and is idempotent', () => {
+  const out = format(MESSY);
+  assert.equal(format(out), out);
+  const headings = out.split('\n').filter((l) => l.startsWith('## '));
+  assert.deepEqual(headings, ['## Product', '## Testing', '## Billing', '## Glossary']);
+  assert.match(out, /^# BOUNDS\.md\n<!-- bounds-md v1 -->\n\n<!-- team notes/);
+  assert.match(out, /## Testing\nowner:\n- TESTING-2 MUST run tests before push\n- TESTING-3 NEVER skip failing tests — a red test is information even when the release is late\n/);
+  assert.match(out, /- BILL-1 NEVER store card numbers\n- BILL-2 SHOULD round to cents — accountants/);
+  assert.match(out, /## Billing\nsome prose note\nowner: @kate/);
+  assert.match(out, /## Glossary\nowner: @lead\n- buyer — a person who orders\n- section — group of rules · avoid: category\n$/);
+  assert.ok(sameContent(MESSY, out));
+  assert.equal(contentHash(MESSY), contentHash(out));
+});
+
+test('sameContent rejects any change to what people wrote', () => {
+  const out = format(MESSY);
+  const changed = {
+    'rule text': out.replace('store card numbers', 'store card numbers encrypted'),
+    'rule level': out.replace('BILL-1 NEVER', 'BILL-1 SHOULD'),
+    'existing ID': out.replace('BILL-1 NEVER', 'BILL-9 NEVER'),
+    'rule removed': out.replace('- BILL-1 NEVER store card numbers\n', ''),
+    'rule moved to another section': out.replace('- BILL-1 NEVER store card numbers\n', '').replace('- PRODUCT-1', '- BILL-1 NEVER store card numbers\n- PRODUCT-1'),
+    'owner': out.replace('owner: @kate', 'owner: @bob'),
+    'note': out.replace('some prose note', 'another note'),
+    'comment': out.replace('team notes', 'team rules'),
+    'term meaning': out.replace('a person who orders', 'a person who pays'),
+    'avoid list': out.replace('avoid: category', 'avoid: category, group'),
+    'section renamed': out.replace('## Billing', '## Payments'),
+  };
+  for (const [what, text] of Object.entries(changed)) assert.equal(sameContent(MESSY, text), false, what);
+});
+
+test('doctor reports, and with --fix rewrites only the layout', () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'bounds-doc-'));
+  const run = (...args) => execFileSync('node', [HOOK, 'doctor', ...args], { env: { ...process.env, CLAUDE_PROJECT_DIR: project }, encoding: 'utf8' });
+  assert.match(run(), /no BOUNDS\.md/);
+  fs.writeFileSync(path.join(project, 'BOUNDS.md'), MESSY);
+  assert.match(run(), /differs from the standard .* run with --fix/);
+  assert.equal(fs.readFileSync(path.join(project, 'BOUNDS.md'), 'utf8'), MESSY, 'no --fix, no write');
+  const fixed = run('--fix');
+  assert.match(fixed, /layout: fixed .*new IDs: TESTING-3, BILL-2.*Content is unchanged/);
+  assert.match(fixed, /content issues/);
+  assert.equal(fs.readFileSync(path.join(project, 'BOUNDS.md'), 'utf8'), format(MESSY));
+  assert.match(run(), /layout: matches the standard/);
+});
+
+test('Claude still cannot edit BOUNDS.md itself, even a layout-only change', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bounds-'));
+  fs.writeFileSync(path.join(dir, 'BOUNDS.md'), MESSY);
+  assert.ok(guard('Write', { file_path: path.join(dir, 'BOUNDS.md'), content: format(MESSY) }, dir));
+  assert.equal(bashTouchesBoundsMd(`node "${HOOK}" doctor --fix`), false, 'the doctor command is allowed');
 });

@@ -2,37 +2,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { parse, isGlossary } from './parse.mjs';
+import { isFormatted, specVersion, SPEC_VERSION } from './format.mjs';
 
-export const LEVELS = ['NEVER', 'MUST NOT', 'MUST', 'SHOULD NOT', 'SHOULD'];
-
-const RULE_RE = new RegExp(`^- (?:\\[?([A-Z][A-Z0-9_]*-\\d+)\\]?\\s+)?(${LEVELS.join('|')})\\b:?\\s*(.+)$`);
+export { parse, parseTerm, isGlossary, LEVELS } from './parse.mjs';
+export { format, sameContent, contentHash } from './format.mjs';
 
 // Words that make a rule uncheckable: nobody can look at a diff and say whether it was followed.
 const VAGUE = /\b(properly|proper|good|clean|nice|appropriate|best practices?|when needed|if possible|as needed)\b|хорош|правильн|красив|аккуратн|по возможности|при необходимости|когда нужно/i;
 
 // Advisory thresholds only: they produce recommendations, never block anything.
 export const ADVICE = { ruleChars: 200, tokens: 3000 };
-
-const GLOSSARY_TITLE = /^(glossary|глоссарий|словарь)$/i;
-
-export function isGlossary(section) {
-  return GLOSSARY_TITLE.test(section.title);
-}
-
-// "- раздел = section — a group of rules for one area · avoid: category, group"
-export function parseTerm(body) {
-  let rest = body;
-  let avoid = [];
-  const a = rest.match(/\s*[·|;]?\s*avoid\s*:\s*(.+)$/i);
-  if (a) {
-    avoid = a[1].split(',').map((s) => s.trim()).filter(Boolean);
-    rest = rest.slice(0, a.index);
-  }
-  const dash = rest.search(/\s[—–-]\s/);
-  const names = dash === -1 ? rest : rest.slice(0, dash);
-  const meaning = dash === -1 ? null : rest.slice(dash + 3).trim() || null;
-  return { names: names.split('=').map((s) => s.trim()).filter(Boolean), meaning, avoid };
-}
 
 export function findBoundsMd(dir) {
   try {
@@ -51,69 +31,16 @@ export function estimateTokens(text) {
   return Math.ceil(text.length / 4);
 }
 
-export function parse(text) {
-  const sections = [];
-  const problems = [];
-  let section = null;
-  let rule = null;
-  let inComment = false;
-
-  const lines = text.split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const lineNo = i + 1;
-
-    if (inComment) {
-      if (line.includes('-->')) inComment = false;
-      continue;
-    }
-    if (line.trimStart().startsWith('<!--')) {
-      inComment = !line.includes('-->');
-      continue;
-    }
-
-    const heading = line.match(/^##\s+(.+?)\s*$/);
-    if (heading) {
-      section = { title: heading[1], owner: null, scope: null, rules: [], terms: [], line: lineNo };
-      sections.push(section);
-      rule = null;
-      continue;
-    }
-    if (!section) continue;
-
-    const meta = line.match(/^(owner|scope)\s*:\s*(.*)$/i);
-    if (meta) {
-      section[meta[1].toLowerCase()] = meta[2].trim() || null;
-      continue;
-    }
-
-    if (line.startsWith('- ') && isGlossary(section)) {
-      rule = { ...parseTerm(line.slice(2).trim()), line: lineNo, isTerm: true };
-      section.terms.push(rule);
-    } else if (rule?.isTerm && /^\s+\S/.test(line)) {
-      const more = parseTerm('x — ' + line.trim());
-      rule.avoid.push(...more.avoid);
-      if (more.meaning) rule.meaning = rule.meaning ? `${rule.meaning} ${more.meaning}` : more.meaning;
-    } else if (line.startsWith('- ')) {
-      const m = line.match(RULE_RE);
-      if (m) {
-        rule = { id: m[1] || null, level: m[2], text: m[3].trim(), line: lineNo, section: section.title };
-        section.rules.push(rule);
-      } else {
-        rule = null;
-        problems.push({ kind: 'format', line: lineNo, msg: `list item without a level (${LEVELS.join('/')}): "${line.slice(2, 70)}"` });
-      }
-    } else if (rule && /^\s+\S/.test(line)) {
-      rule.text += ' ' + line.trim();
-    } else if (line.trim() === '') {
-      rule = null;
-    }
-  }
-  return { sections, problems };
-}
-
 export function check(text) {
   const { sections, problems } = parse(text);
+  if (!isFormatted(text)) {
+    const v = specVersion(text);
+    problems.push({
+      kind: 'layout',
+      line: 0,
+      msg: v === null || v === SPEC_VERSION ? 'layout differs from the standard — /bounds:doctor can fix it' : `file uses format v${v}, current is v${SPEC_VERSION} — /bounds:doctor can migrate it`,
+    });
+  }
   const seen = new Map();
   for (const s of sections) {
     if (s.rules.length && !s.owner) problems.push({ kind: 'owner', line: s.line, msg: `section "${s.title}" has rules but no owner` });
@@ -182,7 +109,8 @@ const READONLY_CMDS = new Set(['cat', 'head', 'tail', 'less', 'more', 'grep', 'e
 const READONLY_GIT = new Set(['diff', 'log', 'blame', 'show', 'status']);
 
 export const DENY_REASON =
-  'BOUNDS.md is written by humans only (bounds plugin). Do not change, move, delete or recreate it by any means. ' +
+  'BOUNDS.md content is written by humans only (bounds plugin). Do not change, move, delete or recreate it by any means. ' +
+  'To fix its layout, use /bounds:doctor — the only thing allowed to rewrite it, and only its layout. ' +
   'If a rule should change, tell the user and give the exact line(s) to paste.';
 
 export function isBoundsPath(p) {

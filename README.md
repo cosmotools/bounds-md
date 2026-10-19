@@ -2,7 +2,7 @@
 
 **BOUNDS.md: project boundaries written by people, enforced for Claude Code.**
 
-As a project grows, so do `CLAUDE.md`, the docs and the skills, and at some point nobody knows what Claude is actually told anymore. `BOUNDS.md` is a separate, short file with one job: say what must and must not happen in each area of the project, and who decides. People write it. Claude reads it and cannot change it.
+As a project grows, so do `CLAUDE.md`, the docs and the skills, and at some point nobody knows what Claude is actually told anymore. `BOUNDS.md` is a separate, short file with one job: say what must and must not happen in each area of the project, and who decides. People write it. Claude reads it and cannot change what it says; only `/bounds:doctor` may tidy its layout.
 
 | | CLAUDE.md | BOUNDS.md |
 |---|---|---|
@@ -43,17 +43,21 @@ Asked to delete that rule from `BOUNDS.md`, Claude is blocked by the plugin and 
 | Session starts | Finds `BOUNDS.md` in the project root and gives it to Claude with instructions on how to follow it. You see `BOUNDS.md: 7 rule(s) in 4 section(s)` in the chat. |
 | The file is new or has changed | In its next reply Claude gives a short review: vague wording, conflicting rules, rules that describe code instead of bounding it, rules the current code already breaks. Each problem comes with a ready-to-paste replacement line. |
 | A person edits the file mid-session | On your next message Claude gets the new version and reviews it. |
-| Claude tries to change BOUNDS.md | Blocked, both through the Edit/Write tools and through the shell (`sed -i`, `>>`, `tee`, `rm`, `mv`…). Creating the file from scratch is allowed. |
+| Claude tries to change BOUNDS.md | Blocked, both through the Edit/Write tools and through the shell (`sed -i`, `>>`, `tee`, `rm`, `mv`…). Creating the file from scratch is allowed. The one exception is `/bounds:doctor`, which may rewrite the layout but never the content. |
 | Claude edits a file using a word the glossary says to avoid | Claude gets a warning right after the edit and renames it, or explains why the word stays. Nothing is blocked. |
 | There is no BOUNDS.md | Suggests `/bounds:init` once per project. |
 
 Commands:
 - `/bounds:init` creates `BOUNDS.md` from the template and suggests a few rules for your project in the chat. It doesn't write them into the file, because rules come from people.
+- `/bounds:doctor` brings the file to the [standard layout](SPEC.md): section order, one-line rules sorted by ID, missing IDs, glossary order, format version. Before it writes, it compares the content of the file before and after the rewrite, and refuses if anything differs. It then lists what only people can fix, and lines in CLAUDE.md that would work better as rules.
 - `/bounds:review` runs a full review: format, whether each rule can be checked, conflicts, a check against the code, rules worth dropping, and missing boundaries.
 
 There are no hard limits on size. If the file gets long or the rules get weak, Claude recommends what to merge or drop.
 
 ## Format
+
+The full standard, including what counts as content and what counts as layout, is in [SPEC.md](SPEC.md). In short:
+
 
 - **Sections.** The template comes with Product, Architecture, UI, Backend, Data, Testing, Security, Dependencies and Process. Add your own freely. An empty section means no boundaries there.
 - **Section metadata.** `owner:` is who decides on the section. `scope:` limits it to matching paths and is optional.
@@ -95,10 +99,14 @@ This repository has its own [BOUNDS.md](BOUNDS.md): the plugin's boundaries, plu
 .claude-plugin/plugin.json        plugin manifest
 .claude-plugin/marketplace.json   lets /plugin install it from this repo
 hooks/hooks.json                  SessionStart, UserPromptSubmit, PreToolUse, PostToolUse
-scripts/bounds.mjs                hook handlers
-scripts/lib.mjs                   parsing, checks, edit protection, state
+scripts/bounds.mjs                hook handlers and the doctor
+scripts/parse.mjs                 BOUNDS.md → document model
+scripts/format.mjs                standard layout, content-equality check
+scripts/lib.mjs                   checks, edit protection, glossary matching, state
 skills/init/SKILL.md              /bounds:init (template inside)
+skills/doctor/SKILL.md            /bounds:doctor
 skills/review/SKILL.md            /bounds:review
+SPEC.md                           the BOUNDS.md format standard
 test/bounds.test.mjs              npm test
 ```
 
@@ -106,6 +114,7 @@ It has no dependencies; Node is all it needs. The plugin remembers which version
 
 ## Limitations
 
+- **The doctor runs as a script.** Claude starts it with a shell command, so in interactive mode you approve that command the first time.
 - **Only Claude is locked out.** People and other tools edit `BOUNDS.md` as usual.
 - **Shell protection is an allow-list.** A shell command that mentions `BOUNDS.md` passes only if it is a known read-only command (`cat`, `grep`, `git diff`…). Anything else is blocked, including harmless things like `cp BOUNDS.md backup.md`. That's on purpose.
 - **Glossary matching is by whole words.** Plurals and other word forms (`categories`, `категории`) are not matched unless listed in the avoid list. Edits made through the shell are not checked.

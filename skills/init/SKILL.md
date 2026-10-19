@@ -13,6 +13,7 @@ disable-model-invocation: true
 
 ````markdown
 # BOUNDS.md
+<!-- bounds-md v1 -->
 
 <!--
 Boundaries for this project, written by people. Claude reads this file in every session and cannot edit it.

@@ -1,4 +1,5 @@
 # BOUNDS.md
+<!-- bounds-md v1 -->
 
 <!--
 Boundaries for the bounds plugin itself, written by its maintainers.
@@ -35,27 +36,27 @@ owner: @cosmotools
 - PROCESS-2 SHOULD keep README.md in sync with behaviour in the same commit
 
 ## Glossary
-owner: @cosmotools
 <!-- The project's vocabulary. Names joined by "=" are the same term in English and Russian. -->
-- boundaries = границы — what the people on a project allow, require and forbid; the meaning of BOUNDS.md as a whole · avoid: guardrails
-- rule = правило — one line in BOUNDS.md that states one boundary, e.g. "- UI-2 NEVER add CSS frameworks — styling lives in the kit"
-- section = раздел — a "## Heading" in BOUNDS.md grouping the rules for one area · avoid: category, категория
-- owner = владелец — the person who decides on a section ("owner:" line)
-- scope = область действия — the paths a section applies to ("scope:" line); no scope means the whole project
-- rule ID = ID правила — section prefix plus a number, e.g. UI-2; IDs of deleted rules are not reused
-- level = уровень — NEVER, MUST, MUST NOT, SHOULD or SHOULD NOT
-- hard rule = жёсткое правило — a rule at NEVER, MUST or MUST NOT; Claude stops rather than break it
-- default = правило по умолчанию — a rule at SHOULD or SHOULD NOT; Claude may deviate if it says why
-- why = зачем — the reason after the "—" in a rule
-- glossary = глоссарий — the "## Glossary" section: the project's agreed vocabulary
-- term = термин — one glossary line: names of a concept, its meaning, words to avoid
+owner: @cosmotools
 - avoided word = слово «не использовать» — a word listed after "avoid:"; using it in an edit gives a warning, not a stop
-- violation = нарушение — a requested change, or existing code, that goes against a rule
-- stop = остановка — Claude makes no change, names the rule ID and offers options
-- deviation = отступление — Claude openly not following a default, with the rule ID and the reason
-- protection = защита — the plugin blocking Claude from changing BOUNDS.md through any tool, including the shell
+- boundaries = границы — what the people on a project allow, require and forbid; the meaning of BOUNDS.md as a whole · avoid: guardrails
 - checks = проверка — automated, script-only checks of BOUNDS.md; no model involved · avoid: lint, linter
-- review = ревью — Claude reading BOUNDS.md for meaning: conflicts, outdated rules, rules the code breaks · avoid: audit
-- vague rule = размытая формулировка — a rule nobody could check against a diff, e.g. "write clean code"
-- description = описание вместо границы — a line explaining how the code works instead of bounding it; belongs in CLAUDE.md
 - conflict = конфликт — two rules that cannot both be followed
+- default = правило по умолчанию — a rule at SHOULD or SHOULD NOT; Claude may deviate if it says why
+- description = описание вместо границы — a line explaining how the code works instead of bounding it; belongs in CLAUDE.md
+- deviation = отступление — Claude openly not following a default, with the rule ID and the reason
+- glossary = глоссарий — the "## Glossary" section: the project's agreed vocabulary
+- hard rule = жёсткое правило — a rule at NEVER, MUST or MUST NOT; Claude stops rather than break it
+- level = уровень — NEVER, MUST, MUST NOT, SHOULD or SHOULD NOT
+- owner = владелец — the person who decides on a section ("owner:" line)
+- protection = защита — the plugin blocking Claude from changing BOUNDS.md through any tool, including the shell
+- review = ревью — Claude reading BOUNDS.md for meaning: conflicts, outdated rules, rules the code breaks · avoid: audit
+- rule = правило — one line in BOUNDS.md that states one boundary, e.g. "- UI-2 NEVER add CSS frameworks — styling lives in the kit"
+- rule ID = ID правила — section prefix plus a number, e.g. UI-2; IDs of deleted rules are not reused
+- scope = область действия — the paths a section applies to ("scope:" line); no scope means the whole project
+- section = раздел — a "## Heading" in BOUNDS.md grouping the rules for one area · avoid: category, категория
+- stop = остановка — Claude makes no change, names the rule ID and offers options
+- term = термин — one glossary line: names of a concept, its meaning, words to avoid
+- vague rule = размытая формулировка — a rule nobody could check against a diff, e.g. "write clean code"
+- violation = нарушение — a requested change, or existing code, that goes against a rule
+- why = зачем — the reason after the "—" in a rule
