@@ -13,6 +13,27 @@ const VAGUE = /\b(properly|proper|good|clean|nice|appropriate|best practices?|wh
 // Advisory thresholds only: they produce recommendations, never block anything.
 export const ADVICE = { ruleChars: 200, tokens: 3000 };
 
+const GLOSSARY_TITLE = /^(glossary|глоссарий|словарь)$/i;
+
+export function isGlossary(section) {
+  return GLOSSARY_TITLE.test(section.title);
+}
+
+// "- раздел = section — a group of rules for one area · avoid: category, group"
+export function parseTerm(body) {
+  let rest = body;
+  let avoid = [];
+  const a = rest.match(/\s*[·|;]?\s*avoid\s*:\s*(.+)$/i);
+  if (a) {
+    avoid = a[1].split(',').map((s) => s.trim()).filter(Boolean);
+    rest = rest.slice(0, a.index);
+  }
+  const dash = rest.search(/\s[—–-]\s/);
+  const names = dash === -1 ? rest : rest.slice(0, dash);
+  const meaning = dash === -1 ? null : rest.slice(dash + 3).trim() || null;
+  return { names: names.split('=').map((s) => s.trim()).filter(Boolean), meaning, avoid };
+}
+
 export function findBoundsMd(dir) {
   try {
     const name = fs.readdirSync(dir).find((f) => f.toLowerCase() === 'bounds.md');
@@ -53,7 +74,7 @@ export function parse(text) {
 
     const heading = line.match(/^##\s+(.+?)\s*$/);
     if (heading) {
-      section = { title: heading[1], owner: null, scope: null, rules: [], line: lineNo };
+      section = { title: heading[1], owner: null, scope: null, rules: [], terms: [], line: lineNo };
       sections.push(section);
       rule = null;
       continue;
@@ -66,7 +87,14 @@ export function parse(text) {
       continue;
     }
 
-    if (line.startsWith('- ')) {
+    if (line.startsWith('- ') && isGlossary(section)) {
+      rule = { ...parseTerm(line.slice(2).trim()), line: lineNo, isTerm: true };
+      section.terms.push(rule);
+    } else if (rule?.isTerm && /^\s+\S/.test(line)) {
+      const more = parseTerm('x — ' + line.trim());
+      rule.avoid.push(...more.avoid);
+      if (more.meaning) rule.meaning = rule.meaning ? `${rule.meaning} ${more.meaning}` : more.meaning;
+    } else if (line.startsWith('- ')) {
       const m = line.match(RULE_RE);
       if (m) {
         rule = { id: m[1] || null, level: m[2], text: m[3].trim(), line: lineNo, section: section.title };
@@ -98,11 +126,53 @@ export function check(text) {
       if (r.text.length > ADVICE.ruleChars) problems.push({ kind: 'long', line: r.line, msg: `${r.id ?? 'rule'}: ${r.text.length} chars — probably more than one boundary` });
     }
   }
+  const terms = sections.flatMap((s) => s.terms);
+  for (const s of sections.filter(isGlossary)) {
+    if (s.terms.length && !s.owner) problems.push({ kind: 'owner', line: s.line, msg: `section "${s.title}" has terms but no owner` });
+  }
+  const names = new Map();
+  for (const t of terms) {
+    if (!t.meaning && t.names.length < 2) problems.push({ kind: 'term', line: t.line, msg: `term "${t.names[0] ?? ''}" has no meaning — add "— what it means"` });
+    for (const n of t.names) {
+      const key = n.toLowerCase();
+      if (names.has(key)) problems.push({ kind: 'dup-term', line: t.line, msg: `term "${n}" is defined twice (first at line ${names.get(key)})` });
+      else names.set(key, t.line);
+    }
+  }
+  for (const t of terms) {
+    for (const a of t.avoid) {
+      if (names.has(a.toLowerCase())) problems.push({ kind: 'term-conflict', line: t.line, msg: `"${a}" is both a term (line ${names.get(a.toLowerCase())}) and a word to avoid` });
+    }
+  }
   const tokens = estimateTokens(text);
   if (tokens > ADVICE.tokens) problems.push({ kind: 'size', line: 0, msg: `file is ~${tokens} tokens and is loaded into every session — look for rules to merge or drop` });
   problems.sort((a, b) => a.line - b.line);
   const ruleCount = sections.reduce((n, s) => n + s.rules.length, 0);
-  return { sections, problems, ruleCount };
+  return { sections, problems, ruleCount, terms };
+}
+
+// Splits camelCase, snake_case and kebab-case so that "categoryId" counts as using "category".
+function words(text) {
+  const tokens = text
+    .replace(/([\p{Ll}\p{N}])(\p{Lu})/gu, '$1 $2')
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+  return ` ${tokens.join(' ')} `;
+}
+
+// Avoided glossary words that appear in `added` but were not already in `removed`.
+export function findAvoided(added, removed, terms) {
+  const now = words(added);
+  const before = words(removed || '');
+  const hits = [];
+  for (const t of terms) {
+    for (const a of t.avoid) {
+      const needle = words(a);
+      if (needle.trim() && now.includes(needle) && !before.includes(needle)) hits.push({ word: a, use: t.names.join(' / ') });
+    }
+  }
+  return hits;
 }
 
 // --- protection -------------------------------------------------------------

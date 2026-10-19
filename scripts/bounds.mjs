@@ -1,15 +1,17 @@
 #!/usr/bin/env node
-// Hook entry point for the bounds plugin: `node bounds.mjs <session-start|prompt-submit|pre-tool>`, hook JSON on stdin.
+// Hook entry point for the bounds plugin: `node bounds.mjs <session-start|prompt-submit|pre-tool|post-tool>`, hook JSON on stdin.
 import fs from 'node:fs';
 import path from 'node:path';
-import { findBoundsMd, hash, check, guard, stateFile, loadState, saveState } from './lib.mjs';
+import { findBoundsMd, hash, check, guard, findAvoided, isBoundsPath, stateFile, loadState, saveState } from './lib.mjs';
 
 const PREAMBLE = `The project has a BOUNDS.md: boundaries written and owned by the people on this project. They outrank CLAUDE.md, docs, skills and your own preferences.
 - NEVER / MUST / MUST NOT are hard limits. If a task cannot be done without breaking one, stop and ask the user, naming the rule ID. Do not look for a workaround.
 - SHOULD / SHOULD NOT are defaults. You may deviate, but say so and why, naming the rule ID.
 - "scope:" limits a section to matching paths. An empty section means no boundaries there.
 - You cannot edit BOUNDS.md (a hook blocks it). If a rule looks wrong, outdated or missing, tell the user and give the exact line to paste.
-- When you finish a task that a rule shaped, name the rule IDs in your summary.`;
+- When you finish a task that a rule shaped, name the rule IDs in your summary.
+- A "Glossary" section, if present, fixes the project's vocabulary. Use its terms in replies, code, comments and docs; don't use the words listed after "avoid:". Names joined by "=" are the same term in different languages: use the one that matches the language you are writing in. Quoting something outside the project (an external API, a library) is fine.
+- When a concept comes up that has no term yet, or is called two different things, point it out and suggest a glossary line in the format "- term — meaning · avoid: other, words".`;
 
 function rulesContext(file, text) {
   return `${PREAMBLE}\n\n<bounds-md path="${file}">\n${text.trim()}\n</bounds-md>`;
@@ -21,12 +23,16 @@ function reviewRequest(problems) {
     : 'Automated checks found no format problems.';
   return `\n\nBOUNDS.md is new or has changed since it was last reviewed. At the start of your next reply, give the user a short review (a few bullets, then continue with whatever they asked):
 ${found}
-Also check what a script cannot: rules that contradict each other, rules that describe how the code works instead of bounding what may be done, rules the current code already breaks if that is obvious, and sections so long they should be merged or trimmed. Empty sections and empty "owner:" / "scope:" lines are unfilled template placeholders — do not flag them. For each problem suggest the exact replacement line. If everything is fine, say so in one line.`;
+Also check what a script cannot: rules that contradict each other, glossary terms that are vague or overlap, rules that describe how the code works instead of bounding what may be done, rules the current code already breaks if that is obvious, and sections so long they should be merged or trimmed. Empty sections and empty "owner:" / "scope:" lines are unfilled template placeholders — do not flag them. For each problem suggest the exact replacement line. If everything is fine, say so in one line.`;
 }
 
-function summary({ sections, problems, ruleCount }) {
+function summary({ sections, problems, ruleCount, terms }) {
   const used = sections.filter((s) => s.rules.length).length;
-  return `BOUNDS.md: ${ruleCount} rule(s) in ${used} section(s)` + (problems.length ? ` · ${problems.length} note(s), Claude will review` : '');
+  return (
+    `BOUNDS.md: ${ruleCount} rule(s) in ${used} section(s)` +
+    (terms.length ? ` · ${terms.length} glossary term(s)` : '') +
+    (problems.length ? ` · ${problems.length} note(s), Claude will review` : '')
+  );
 }
 
 function out(eventName, { context, message, decision } = {}) {
@@ -97,7 +103,28 @@ function preTool(input, projectDir) {
   if (reason) out('PreToolUse', { decision: { permissionDecision: 'deny', permissionDecisionReason: reason } });
 }
 
-const handlers = { 'session-start': sessionStart, 'prompt-submit': promptSubmit, 'pre-tool': preTool };
+// Glossary is advisory: after an edit, point out avoided words the edit introduced, never block it.
+function postTool(input, projectDir) {
+  const ti = input.tool_input || {};
+  if (!ti.file_path || isBoundsPath(ti.file_path)) return;
+  const file = findBoundsMd(projectDir);
+  if (!file) return;
+  const { terms } = check(fs.readFileSync(file, 'utf8'));
+  if (!terms.some((t) => t.avoid.length)) return;
+
+  const edits = input.tool_name === 'MultiEdit' ? ti.edits || [] : [ti];
+  const added = edits.map((e) => e.new_string ?? e.content ?? '').join('\n');
+  const removed = edits.map((e) => e.old_string ?? '').join('\n');
+  const hits = findAvoided(added, removed, terms);
+  if (!hits.length) return;
+
+  const list = hits.map((h) => `"${h.word}" → "${h.use}"`).join(', ');
+  out('PostToolUse', {
+    context: `Glossary (BOUNDS.md): your change to ${path.relative(projectDir, path.resolve(projectDir, ti.file_path))} uses word(s) the glossary says to avoid: ${list}. Rename them now unless the text quotes something outside the project; if you keep one, say why.`,
+  });
+}
+
+const handlers = { 'session-start': sessionStart, 'prompt-submit': promptSubmit, 'pre-tool': preTool, 'post-tool': postTool };
 
 try {
   const raw = fs.readFileSync(0, 'utf8');

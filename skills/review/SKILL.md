@@ -12,6 +12,7 @@ Check each rule for:
 4. **Conflicts** — rules (often in different sections) that cannot both be followed, or whose scopes overlap with opposite demands.
 5. **Reality** — search the code: rules the code already breaks, `scope:` paths that don't exist, rules about things the project no longer has.
 6. **Weight** — sections that are long, repetitive or mostly low-value SHOULDs. Recommend what to merge or drop; there is no fixed limit, the goal is that every line earns its place in every session's context.
-7. **Gaps** — at most 3 important boundaries that seem missing given what the code does (e.g. touching auth, migrations, public APIs), as suggestions.
+7. **Glossary** — for each term: is the meaning clear, do two terms overlap, is an "avoid:" word actually a different concept? Search the code and docs for avoided words and report how often each still appears (the user decides whether to rename; renames in existing code are not urgent). Point out concepts in the code that are named in several ways and have no term yet.
+8. **Gaps** — at most 3 important boundaries that seem missing given what the code does (e.g. touching auth, migrations, public APIs), as suggestions.
 
 Output grouped by section: rule ID → problem → suggested line. Start with a one-line verdict. Keep it scannable.

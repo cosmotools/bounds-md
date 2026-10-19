@@ -15,6 +15,9 @@ Terms as this project uses them in code, docs and discussion. Standard Claude Co
 | **level** | How strict a rule is: `NEVER`, `MUST`, `MUST NOT`, `SHOULD` or `SHOULD NOT`. |
 | **hard rule** | A rule at `NEVER`, `MUST` or `MUST NOT`. Claude stops rather than break it. |
 | **default** | A rule at `SHOULD` or `SHOULD NOT`. Claude may deviate if it says why. |
+| **glossary** | The `## Glossary` section of BOUNDS.md: the project's agreed vocabulary. |
+| **term** | One glossary line: the name(s) of a concept, what it means, and words to avoid for it. |
+| **avoided word** | A word listed after `avoid:`. Using it in an edit triggers a warning, not a stop. |
 | **why** | The reason after the `—` in a rule. Optional, but it helps people and Claude judge edge cases. |
 
 ## Behaviour

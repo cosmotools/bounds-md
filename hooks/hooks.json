@@ -1,5 +1,5 @@
 {
-  "description": "Load BOUNDS.md into every session, reload it when it changes, and block Claude from modifying it",
+  "description": "Load BOUNDS.md into every session, reload it when it changes, block Claude from modifying it, and flag avoided glossary words in Claude's edits",
   "hooks": {
     "SessionStart": [
       {
@@ -15,6 +15,12 @@
       {
         "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
         "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/bounds.mjs\" pre-tool", "timeout": 10 }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/bounds.mjs\" post-tool", "timeout": 10 }]
       }
     ]
   }
