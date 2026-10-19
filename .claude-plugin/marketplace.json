@@ -2,7 +2,8 @@
   "name": "bounds-md",
   "description": "BOUNDS.md — project boundaries written by people, enforced for Claude",
   "owner": {
-    "name": "bodpad"
+    "name": "cosmotools",
+    "url": "https://github.com/cosmotools"
   },
   "plugins": [
     {

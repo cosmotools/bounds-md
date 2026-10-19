@@ -10,6 +10,9 @@
   ],
   "license": "MIT",
   "author": {
-    "name": "bodpad"
-  }
+    "name": "cosmotools",
+    "url": "https://github.com/cosmotools"
+  },
+  "homepage": "https://github.com/cosmotools/bounds-md",
+  "repository": "https://github.com/cosmotools/bounds-md"
 }
