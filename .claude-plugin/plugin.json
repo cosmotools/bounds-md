@@ -1,0 +1,15 @@
+{
+  "name": "bounds",
+  "version": "0.1.0",
+  "description": "BOUNDS.md: project boundaries written by people. Loaded into every session, protected from Claude's edits, reviewed for vague or conflicting rules.",
+  "keywords": [
+    "rules",
+    "guardrails",
+    "governance",
+    "claude-md"
+  ],
+  "license": "MIT",
+  "author": {
+    "name": "bodpad"
+  }
+}

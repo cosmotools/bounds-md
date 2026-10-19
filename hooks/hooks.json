@@ -1,0 +1,21 @@
+{
+  "description": "Load BOUNDS.md into every session, reload it when it changes, and block Claude from modifying it",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/bounds.mjs\" session-start", "timeout": 10 }]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/bounds.mjs\" prompt-submit", "timeout": 10 }]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/bounds.mjs\" pre-tool", "timeout": 10 }]
+      }
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "bounds-md",
+  "description": "BOUNDS.md — project boundaries written by people, enforced for Claude",
+  "owner": {
+    "name": "bodpad"
+  },
+  "plugins": [
+    {
+      "name": "bounds",
+      "source": "./",
+      "description": "BOUNDS.md: project boundaries written by people, enforced for Claude"
+    }
+  ]
+}
