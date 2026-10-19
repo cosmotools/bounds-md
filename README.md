@@ -87,7 +87,7 @@ Asked to "return products grouped by category and the total of a customer's cart
 
 A good rule can be checked against a diff. "Write clean code" can't; "NEVER use inline styles" can.
 
-Terms used here are defined in [GLOSSARY.md](GLOSSARY.md).
+This repository has its own [BOUNDS.md](BOUNDS.md): the plugin's boundaries, plus a glossary of every term used here, in English and Russian. It's also a complete example of the format.
 
 ## How it works
 
