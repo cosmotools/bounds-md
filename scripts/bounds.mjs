@@ -2,7 +2,7 @@
 // Hook entry point for the bounds plugin: `node bounds.mjs <session-start|prompt-submit|pre-tool>`, hook JSON on stdin.
 import fs from 'node:fs';
 import path from 'node:path';
-import { findBoundsMd, hash, lint, guard, stateFile, loadState, saveState } from './lib.mjs';
+import { findBoundsMd, hash, check, guard, stateFile, loadState, saveState } from './lib.mjs';
 
 const PREAMBLE = `The project has a BOUNDS.md: boundaries written and owned by the people on this project. They outrank CLAUDE.md, docs, skills and your own preferences.
 - NEVER / MUST / MUST NOT are hard limits. If a task cannot be done without breaking one, stop and ask the user, naming the rule ID. Do not look for a workaround.
@@ -56,7 +56,7 @@ function sessionStart(input, projectDir) {
     }
     return;
   }
-  const result = lint(text);
+  const result = check(text);
   let context = rulesContext(path.relative(projectDir, file), text);
   if (state.reviewed !== h) {
     context += reviewRequest(result.problems);
@@ -81,7 +81,7 @@ function promptSubmit(input, projectDir) {
     });
     return;
   }
-  const result = lint(text);
+  const result = check(text);
   let context = `BOUNDS.md changed during this session. This version replaces any earlier one.\n\n${rulesContext(path.relative(projectDir, file), text)}`;
   if (state.reviewed !== h) {
     context += reviewRequest(result.problems);

@@ -84,7 +84,7 @@ export function parse(text) {
   return { sections, problems };
 }
 
-export function lint(text) {
+export function check(text) {
   const { sections, problems } = parse(text);
   const seen = new Map();
   for (const s of sections) {

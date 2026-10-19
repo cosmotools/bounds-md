@@ -2,8 +2,6 @@
 
 **BOUNDS.md: project boundaries written by people, enforced for Claude Code.**
 
-[Русская версия](README.ru.md)
-
 As a project grows, so do `CLAUDE.md`, the docs and the skills, and at some point nobody knows what Claude is actually told anymore. `BOUNDS.md` is a separate, short file with one job: say what must and must not happen in each area of the project, and who decides. People write it. Claude reads it and cannot change it.
 
 | | CLAUDE.md | BOUNDS.md |
@@ -65,6 +63,8 @@ There are no hard limits on size. If the file gets long or the rules get weak, C
 - **Comments.** `<!-- -->` blocks are notes for people and are never read as rules.
 
 A good rule can be checked against a diff. "Write clean code" can't; "NEVER use inline styles" can.
+
+Terms used here are defined in [GLOSSARY.md](GLOSSARY.md).
 
 ## How it works
 

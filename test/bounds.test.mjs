@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { lint, guard, bashTouchesBoundsMd, findBoundsMd } from '../scripts/lib.mjs';
+import { check, guard, bashTouchesBoundsMd, findBoundsMd } from '../scripts/lib.mjs';
 
 const HOOK = path.resolve('scripts/bounds.mjs');
 const TEMPLATE = fs.readFileSync('skills/init/SKILL.md', 'utf8').match(/````markdown\n([\s\S]*?)````/)[1];
@@ -27,7 +27,7 @@ scope: src/ui/**
 `;
 
 test('parses sections, owners, scopes, rules and continuation lines; skips comments', () => {
-  const { sections } = lint(SAMPLE);
+  const { sections } = check(SAMPLE);
   assert.deepEqual(sections.map((s) => s.title), ['UI', 'Backend']);
   assert.equal(sections[0].owner, '@anna');
   assert.equal(sections[0].scope, 'src/ui/**');
@@ -37,15 +37,15 @@ test('parses sections, owners, scopes, rules and continuation lines; skips comme
   assert.equal(sections[1].rules[2].id, null);
 });
 
-test('lint reports format, vague, owner, duplicate and missing-ID problems — and nothing about rule counts', () => {
-  const kinds = lint(SAMPLE).problems.map((p) => p.kind).sort();
+test('checks report format, vague, owner, duplicate and missing-ID problems — and nothing about rule counts', () => {
+  const kinds = check(SAMPLE).problems.map((p) => p.kind).sort();
   assert.deepEqual(kinds, ['dup', 'format', 'id', 'owner', 'vague']);
   const many = '## UI\nowner: a\n' + Array.from({ length: 40 }, (_, i) => `- UI-${i + 1} MUST rule ${i + 1}`).join('\n');
-  assert.deepEqual(lint(many).problems, []);
+  assert.deepEqual(check(many).problems, []);
 });
 
 test('the empty template is clean', () => {
-  const r = lint(TEMPLATE);
+  const r = check(TEMPLATE);
   assert.equal(r.ruleCount, 0);
   assert.deepEqual(r.problems, []);
   assert.equal(r.sections.length, 9);
